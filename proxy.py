@@ -40,6 +40,7 @@ import tornado.httpclient
 import tornado.httputil
 import json
 import urllib
+import xml.dom.minidom
 logger = logging.getLogger('tornado_proxy')
 
 __all__ = ['ProxyHandler', 'run_proxy']
@@ -111,6 +112,29 @@ def get_xiami_music_url(url):
     print  "found music url:" + decode_location(enurl)
     return decode_location(enurl)
 
+def get_kuwo_music_url(url):
+    id=url.replace("http://bd.kuwo.cn/yinyue/","")
+    id = id.replace("?from=baidu", "")
+    r = requests.get("http://player.kuwo.cn/webmusic/st/getNewMuiseByRid?rid=MUSIC_" + id)
+    doc = xml.dom.minidom.parseString(r.content.replace("&","&amp;"))
+    node1=doc.getElementsByTagName("mp3path")[0]
+    mp3path= node1.childNodes[0].data
+    node2=doc.getElementsByTagName("mp3dl")[0]
+    mp3server= node2.childNodes[0].data
+    murl="http://" +mp3server+ "/resource/" +mp3path
+    print  "found music url:" + murl
+    return murl
+
+def get_qq_music_url(url):
+    id=url.replace("http://y.qq.com/#type=song&play=1&mid=","")
+    id = id.replace("&ADTAG=baiduald", "")
+    r = requests.get("http://i.y.qq.com/v8/fcg-bin/fcg_play_single_song.fcg?songmid=" + id +"&tpl=yqq_song_detail&play=1&ADTAG=baiduald")
+    r1 = re.compile(r'songid":(.*?),')
+    m = re.findall(r1, r.content)
+    sid=m[0]
+    murl="http://stream.qqmusic.tc.qq.com/" + sid +".mp3"
+    print  "found music url:" + murl
+    return murl
 
 def get_baidu_music_url(url):
     r = requests.get(url)
@@ -149,22 +173,35 @@ def get_replaced_music_url(m_name,m_artist):
     r1 = re.compile(r"http://www.baidu.com/link(.*?)'")
     m2 = re.findall(r1, str(m))
 
-
+    realm = []
     #print m2
     for item in m2:
         real_url=get_real_url("http://www.baidu.com/link" + item)
         item=real_url
+        realm.append(real_url)
         print "candidate url: " + real_url
 
     # you can adjust priority of the sources by changing the code order
-    for item in m2:
-        if real_url.find("http://www.xiami.com/song/")!=-1:
+    for item in realm:
+        if item.find("http://y.qq.com/")!=-1:
+            print "found QQMusic,Analyzing music url..."
+            return get_qq_music_url(item)
+
+    for item in realm:
+        if item.find("http://www.xiami.com/song/")!=-1:
             print "found XiamiMusic,Analyzing music url..."
-            return get_xiami_music_url(real_url)
+            return get_xiami_music_url(item)
+
+
+    for item in realm:
+        if item.find("http://bd.kuwo.cn/yinyue/")!=-1:
+            print "found KuwoMusic,Analyzing music url..."
+            return get_kuwo_music_url(item)
+
     for item in m2:
-        if real_url.find("http://music.baidu.com/song/")!=-1:
-            print "found BaiduMusic,Analyzing music url..."
-            return get_baidu_music_url(real_url)
+        if item.find("http://www.xiami.com/song/")!=-1:
+            print "found XiamiMusic,Analyzing music url..."
+            return get_xiami_music_url(item)
 
 
 def deal(url,body):
@@ -182,7 +219,7 @@ def deal(url,body):
 
     if url=="http://music.163.com/eapi/song/enhance/player/url":
         jplayinfo=json.loads(body)
-        if jplayinfo["data"][0]["code"]==404:
+        if jplayinfo["data"][0]["code"]!=200:
             print "player music id: " + str(jplayinfo["data"][0]["id"]) + " not found,trying to redirect..."
             m_name,m_artist=get_music_info(jplayinfo["data"][0]["id"])
             newurl = get_replaced_music_url(m_name, m_artist)
@@ -207,7 +244,7 @@ def deal(url,body):
                 jplayinfo["data"]["size"] = 0
             body = json.dumps(jplayinfo)
 
-        #print body
+    #print body
 
     return body
 
